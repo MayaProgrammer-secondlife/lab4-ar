@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ЛР №4. Маркерная дополненная реальность</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<style>
+body{font-family:Arial,sans-serif;margin:0;background:#12161c;color:#eee}
+header{padding:10px 14px;background:#1d2530}h1{font-size:18px;margin:0}
+main{max-width:760px;margin:auto;padding:10px}
+button,label.btn{background:#2f80ed;color:#fff;border:0;border-radius:6px;padding:10px 14px;font-size:15px;margin:3px;cursor:pointer;display:inline-block}
+canvas#view{width:100%;background:#000;border-radius:8px;display:block}
+#status{margin:8px 0;color:#9fb3c8;font-size:14px}
+.markers{display:flex;flex-wrap:wrap;gap:12px}
+.m{background:#fff;color:#000;padding:8px;border-radius:8px;text-align:center;font-size:13px;width:150px}
+.m img{width:134px;height:134px}
+</style></head><body>
+<header><h1>ЛР №4. Маркерная AR: наведи камеру на QR-маркер</h1></header>
+<main>
+<button id="start">Включить камеру</button>
+<label class="btn">Загрузить фото с маркером<input id="file" type="file" accept="image/*" hidden></label>
+<div id="status">Камера выключена. Маркеры для проверки показаны ниже.</div>
+<canvas id="view" width="640" height="480"></canvas>
+<h3>Маркеры (покажи на втором экране или распечатай)</h3>
+<div class="markers" id="markers"></div>
+</main>
+<script>
+// Сценарии (задание 1.2): код маркера -> карточка с данными
+const DATA = {
+  "LAB4-MUSEUM": {t: "Экспонат №12", c: "#e67e22",
+    l: ["Токарный станок, 1957 г.", "Назначение: обработка валов", "Музейный гид"]},
+  "LAB4-MACHINE": {t: "Станок ЧПУ-3", c: "#27ae60",
+    l: ["Статус: исправен", "ТО: 15.11.2026", "Инструкция по безопасности"]},
+  "LAB4-ROOM": {t: "Аудитория 305", c: "#8e44ad",
+    l: ["ТВиДР, лекция 10:20", "Преподаватель: см. расписание", "Навигация по кампусу"]},
+  "LAB4-ITEM": {t: "Блок питания 12 В", c: "#c0392b",
+    l: ["Схема подключения: красный +", "Макс. ток: 5 А", "Сборка и ремонт"]}
+};
+
+// Рисуем маркеры-образцы
+const box = document.getElementById("markers");
+for (const code in DATA) {
+  const qr = qrcode(0, "M"); qr.addData(code); qr.make();
+  const d = document.createElement("div"); d.className = "m";
+  d.innerHTML = '<img src="' + qr.createDataURL(6) + '"><br>' + code;
+  box.appendChild(d);
+}
+
+const view = document.getElementById("view"), ctx = view.getContext("2d");
+const video = document.createElement("video"); video.playsInline = true;
+const status = document.getElementById("status");
+let running = false, frame = 0, last = null;
+
+function overlay(loc, code, k) {
+  const info = DATA[code], tl = loc.topLeftCorner, tr = loc.topRightCorner;
+  const P = [tl, tr, loc.bottomRightCorner, loc.bottomLeftCorner];
+  ctx.lineWidth = 4 * k; ctx.strokeStyle = info ? info.c : "#e74c3c";
+  ctx.beginPath(); P.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+  ctx.closePath(); ctx.stroke();
+  const w = Math.hypot(tr.x - tl.x, tr.y - tl.y), ang = Math.atan2(tr.y - tl.y, tr.x - tl.x);
+  const s = Math.max(w / 150, 0.6), lines = info ? info.l : ["Маркер не из сценариев", code];
+  const W = 220 * s, H = (30 + 20 * lines.length) * s;
+  ctx.save(); ctx.translate(tl.x, tl.y); ctx.rotate(ang);   // карточка наклонена вместе с маркером
+  ctx.fillStyle = "rgba(20,25,32,.88)"; ctx.fillRect(0, -H - 10 * s, W, H);
+  ctx.fillStyle = info ? info.c : "#e74c3c"; ctx.fillRect(0, -H - 10 * s, W, 24 * s);
+  ctx.fillStyle = "#fff"; ctx.font = "bold " + 15 * s + "px Arial";
+  ctx.fillText(info ? info.t : "Неизвестный маркер", 8 * s, -H + 8 * s);
+  ctx.font = 13 * s + "px Arial";
+  lines.forEach((t, i) => ctx.fillText(t, 8 * s, -H + (38 + 20 * i) * s));
+  ctx.restore();
+}
+
+function scan(src, sw, sh) {
+  view.width = sw; view.height = sh; ctx.drawImage(src, 0, 0, sw, sh);
+  const img = ctx.getImageData(0, 0, sw, sh);
+  const r = jsQR(img.data, sw, sh, {inversionAttempts: "attemptBoth"});
+  if (r) { overlay(r.location, r.data, sw / 640); last = r.data; }
+  status.textContent = r ? "Маркер найден: " + r.data : "Маркер не найден — наведи камеру на QR-код";
+}
+
+function loop() {
+  if (!running) return;
+  if (video.readyState >= 2 && (frame++ % 2 === 0)) {
+    const sw = Math.min(video.videoWidth, 640), sh = Math.round(sw * video.videoHeight / video.videoWidth);
+    scan(video, sw, sh);
+  }
+  requestAnimationFrame(loop);
+}
+
+document.getElementById("start").onclick = async () => {
+  try {
+    video.srcObject = await navigator.mediaDevices.getUserMedia({video: {facingMode: "environment"}});
+    await video.play(); running = true; loop();
+  } catch (e) {
+    status.textContent = "Камера недоступна (" + e.name + "). Нужен HTTPS или localhost и разрешение на камеру. Можно загрузить фото.";
+  }
+};
+
+document.getElementById("file").onchange = e => {
+  running = false; const f = e.target.files[0]; if (!f) return;
+  const im = new Image(); im.onload = () => {
+    const sw = Math.min(im.width, 1000), sh = Math.round(sw * im.height / im.width); scan(im, sw, sh);
+  };
+  im.src = URL.createObjectURL(f);
+};
+</script></body></html>
